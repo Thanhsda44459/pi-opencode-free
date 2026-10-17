@@ -224,3 +224,31 @@ test('refreshCatalog shares one fetch between concurrent callers', async () => {
 	resetCatalogState()
 	assert.equal(currentCatalog().source, 'seed')
 })
+
+test('refreshCatalog bounds the fetch with its own timeout and records it', async () => {
+	resetCatalogState()
+	const hung: CatalogFetchers = {
+		fetchListing: (signal) =>
+			new Promise((_, reject) => {
+				signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+			}),
+		fetchMetadata: (signal) =>
+			new Promise((_, reject) => {
+				signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+			}),
+	}
+
+	const timedOut = await refreshCatalog({ allowNetwork: true, force: true, fetchers: hung, timeoutMs: 25 })
+	assert.equal(timedOut.source, 'seed', 'a hung fetch must fall back to the previous catalog')
+	assert.ok(timedOut.error, 'the timeout must be recorded as the last error')
+
+	const recovered = await refreshCatalog({
+		allowNetwork: true,
+		force: true,
+		fetchers: fetchers({ data: [{ id: 'beam-free' }] }, {}),
+	})
+	assert.equal(recovered.source, 'live', 'a later healthy fetch must recover')
+	assert.equal(recovered.error, undefined)
+
+	resetCatalogState()
+})

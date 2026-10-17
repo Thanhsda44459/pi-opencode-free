@@ -12,7 +12,7 @@ Tên provider trong Pi: **`zen-free`** (ví dụ `zen-free/big-pickle`). Biến 
 - **Vượt qua Shape Gate của OpenCode Zen**: Tự động đáp ứng toàn bộ các kiểm tra hình thái nghiêm ngặt của Gateway (Header giả lập CLI, Session EID thuật toán counter 12-bit kết thúc `ffe`, chèn tự động các công cụ chuẩn `shell`/`read` với nguyên văn definition gốc).
 - **Chống nhiễu header từ extension khác**: Loại bỏ `x-opencode-request` (header mà Gateway trả 403 `FreeTierError` dù chỉ có mặt, bất kể giá trị) và ép lại header của chính nó sau mọi sửa đổi của extension khác.
 - **Tối giản & Độc lập**: 0 dependencies thời gian chạy (zero runtime npm dependencies), tương thích 100% trên cả Windows và Linux.
-- **Tự động cập nhật model**: Provider đăng ký hook `refreshModels` của host — Pi tự làm mới danh sách model khi khởi động và mỗi lần mở `/model`. Model miễn phí mới của OpenCode Zen xuất hiện mà không cần sửa code.
+- **Tự động cập nhật model**: Extension prefetch danh mục ngay lúc khởi động (mọi chế độ đều thấy model mới, kể cả `pi --list-models`) và đăng ký hook `refreshModels` của host — Pi tự làm mới khi khởi động interactive/RPC và mỗi lần mở `/model`. Model miễn phí mới của OpenCode Zen xuất hiện mà không cần sửa code.
 - **Có công cụ Doctor chẩn đoán**: Tự kiểm tra xem Gateway có thay đổi cấu trúc cổng hay không chỉ với một lệnh.
 
 ---
@@ -137,15 +137,27 @@ Host Pi hỗ trợ `ProviderConfig.refreshModels(context)` cho form
 ```ts
 pi.registerProvider(PROVIDER, {
   // ...
-  models: [...seedModels],           // danh sách khởi động tức thời
+  models: [...catalogModels],        // danh sách đăng ký lúc khởi động
   refreshModels: async (context) => {
     // context.allowNetwork=false khi offline/cache-only initialization
     // context.force=true khi refresh thủ công
-    // context.signal phải được truyền vào mọi I/O
     return [...liveModels]            // thay thế danh sách model của provider
   },
 })
 ```
+
+Extension chủ động fetch danh mục **trước khi đăng ký provider** (factory async —
+host Pi chờ async factory xong mới khởi động tiếp), nên mọi chế độ khởi động
+(TUI, `pi --list-models`, `-p`, RPC) đều thấy danh sách live ngay; hook
+`refreshModels` chỉ còn nhiệm vụ cập nhật các thay đổi về sau.
+
+Hook **cố ý không truyền `context.signal`** vào fetch: pi-ai gọi
+`beginProviderRefresh` cho mỗi pass refresh và abort request đang bay của pass
+trước (`supersedeProviderRefresh`) — thực đo trên pi 1.3.0 cho thấy fetch luôn
+bị hủy giữa chừng (`This operation was aborted`) nên danh mục kẹt ở seed mãi.
+Fetch có timeout riêng (`CATALOG_TIMEOUT_MS` 10s; riêng prefetch khởi động
+`CATALOG_FACTORY_TIMEOUT_MS` 5s) và chỉ là một request nhỏ đã cache, nên hoàn
+thành nốt an toàn hơn là hủy.
 
 Host gọi hook này trong các pass refresh của nó — khởi động interactive/RPC và
 mỗi lần mở model selector — rồi tự publish danh sách trả về; không cần
@@ -164,4 +176,5 @@ Hai nguồn dữ liệu, fetch song song:
 Cache: danh mục live được dùng lại trong 10 phút (`LIVE_REFRESH_TTL_MS`) trừ
 khi `force`; các lần gọi đồng thời chia sẻ một request đang bay. Đặt
 `PI_ZEN_FREE_STATIC=1` để khóa extension ở danh sách seed, không chạm mạng
-(debug/offline).
+(debug/offline); `pi --offline` / `PI_OFFLINE=1` bỏ qua prefetch khởi động
+nhưng vẫn giữ seed.

@@ -23,8 +23,8 @@ import type { ChatModelConfig } from './models.ts'
 import { withGateTools } from './gate.ts'
 import { classifyUpstreamFailure, formatFailure, statusFromMessage } from './errors.ts'
 import { clientProjectID, PROCESS_SESSION, sessionForRequest, sessionHeaders } from './session.ts'
-import { SEED_MODELS } from './models.ts'
 import {
+	CATALOG_FACTORY_TIMEOUT_MS,
 	MODELS_DEV_ENDPOINT,
 	ZEN_MODELS_ENDPOINT,
 	currentCatalog,
@@ -44,6 +44,11 @@ const PROJECT_ID = clientProjectID('pi:default-project')
 
 /** `PI_ZEN_FREE_STATIC=1` pins the provider to the curated seeds (no network). */
 const STATIC_CATALOG = process.env.PI_ZEN_FREE_STATIC === '1'
+
+/** pi's `--offline` flag (PI_OFFLINE=1/true/yes) disables startup network work. */
+function offlineAtStartup(): boolean {
+	return /^(1|true|yes)$/i.test(process.env.PI_OFFLINE ?? '')
+}
 
 const DISGUISE_HEADERS: Record<string, string> = {
 	'user-agent': 'opencode/latest/2.0.29/cli',
@@ -214,14 +219,16 @@ function applyProvider(pi: ExtensionAPI, models: readonly ChatModelConfig[]): vo
 		authHeader: true,
 		headers: DISGUISE_HEADERS,
 		models: [...models],
-		// Host-driven auto-refresh: interactive/RPC startup and every model
-		// selector open invoke this hook, then publish the returned list as the
-		// provider's live models. See catalog.ts for the merge policy.
+		// Host-driven refresh: interactive/RPC startup and every model selector
+		// open invoke this hook, then publish the returned list as the provider's
+		// live models. `context.signal` is deliberately not forwarded: pi-ai
+		// aborts the in-flight refresh whenever a newer pass supersedes it,
+		// which used to cancel every live fetch (see catalog.ts). Merge policy
+		// lives there too.
 		refreshModels: async (context) => {
 			const catalog = await refreshCatalog({
 				allowNetwork: context.allowNetwork && !STATIC_CATALOG,
 				force: context.force,
-				signal: context.signal,
 				fetchers: catalogFetchers(),
 			})
 			if (process.env.PI_ZEN_FREE_DEBUG) {
@@ -257,9 +264,19 @@ function catalogFetchers(): CatalogFetchers {
 	}
 }
 
-export default function (pi: ExtensionAPI): void {
+export default async function (pi: ExtensionAPI): Promise<void> {
 	registerSeam()
-	applyProvider(pi, SEED_MODELS)
+
+	// Prefetch before registering. The host awaits async factories, so startup
+	// modes that never run a network refresh pass — `pi --list-models`, print
+	// mode — see the live list immediately; the host's own refresh passes then
+	// hit the TTL cache instead of racing their abort signal.
+	const catalog = await refreshCatalog({
+		allowNetwork: !STATIC_CATALOG && !offlineAtStartup(),
+		fetchers: catalogFetchers(),
+		timeoutMs: CATALOG_FACTORY_TIMEOUT_MS,
+	})
+	applyProvider(pi, catalog.models)
 
 	pi.registerCommand('zen-free', {
 		description: 'OpenCode Zen Free Models: doctor [model], models [refresh]',
@@ -335,8 +352,9 @@ export default function (pi: ExtensionAPI): void {
 
 	// pi 1.2.0's ExtensionAPI has no logger; keep startup info opt-in on stderr.
 	if (process.env.PI_ZEN_FREE_DEBUG) {
+		const state = catalog.error ? ` · last error: ${catalog.error}` : ''
 		console.error(
-			`[${PROVIDER}] registered · session ${PROCESS_SESSION} · ${SEED_MODELS.length} seed models (live catalog refreshes via host)`,
+			`[${PROVIDER}] registered · session ${PROCESS_SESSION} · ${catalog.models.length} models · catalog ${catalog.source}${state}`,
 		)
 	}
 }

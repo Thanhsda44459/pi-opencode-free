@@ -10,11 +10,15 @@
  *   conservative defaults otherwise;
  * - ids on the {@link UNAVAILABLE} denylist are never offered.
  *
- * Wiring: the host calls the provider `refreshModels(context)` hook during its
- * catalog refresh passes (interactive/RPC startup, model selector open) and
- * publishes the returned list as the provider's live models. Seeds absent from
- * the listing are kept: a listing miss is not proof the model stopped working,
- * and dropping a model under the user's cursor mid-session is hostile.
+ * Wiring: the extension prefetches at startup (the host awaits async factories
+ * before it continues), so every startup mode — interactive TUI,
+ * `pi --list-models`, print/RPC — sees the real list immediately; the host then
+ * calls the provider `refreshModels(context)` hook during its catalog refresh
+ * passes (interactive/RPC startup, model selector open) to pick up later
+ * changes and publishes the returned list as the provider's live models. Seeds
+ * absent from the listing are kept: a listing miss is not proof the model
+ * stopped working, and dropping a model under the user's cursor mid-session is
+ * hostile.
  */
 
 import {
@@ -35,6 +39,8 @@ export const DEFAULT_MAX_TOKENS = 32_000
 /** Reuse a successful live listing for this long before fetching again. */
 export const LIVE_REFRESH_TTL_MS = 10 * 60_000
 export const CATALOG_TIMEOUT_MS = 10_000
+/** Hard cap for the startup prefetch: a dead network must not stall pi. */
+export const CATALOG_FACTORY_TIMEOUT_MS = 5_000
 
 /** Metadata shape of one models.dev entry, kept structurally loose: every
  * field is validated before use because the payload is remote input. */
@@ -65,7 +71,8 @@ export interface CatalogFetchers {
 export interface CatalogRefreshOptions {
 	readonly allowNetwork: boolean
 	readonly force?: boolean
-	readonly signal?: AbortSignal
+	/** Bound for the network fetch; defaults to {@link CATALOG_TIMEOUT_MS}. */
+	readonly timeoutMs?: number
 	readonly fetchers: CatalogFetchers
 	readonly now?: () => number
 }
@@ -186,6 +193,14 @@ export function resetCatalogState(): void {
  *
  * Concurrent callers share one in-flight fetch; a `live` catalog younger than
  * {@link LIVE_REFRESH_TTL_MS} is reused unless `force` is set.
+ *
+ * The fetch is bounded by `timeoutMs`/{@link CATALOG_TIMEOUT_MS} and ignores
+ * the host's refresh signal on purpose: pi-ai aborts the in-flight
+ * per-provider refresh as soon as any newer refresh pass starts, which in
+ * practice killed every live fetch before it finished (`This operation was
+ * aborted`) and left the catalog on seeds forever. This is one small bounded
+ * request whose result is cached; letting it finish is what makes later
+ * passes see live models.
  */
 export async function refreshCatalog(options: CatalogRefreshOptions): Promise<LiveCatalog> {
 	const now = options.now ?? Date.now
@@ -194,10 +209,9 @@ export async function refreshCatalog(options: CatalogRefreshOptions): Promise<Li
 	if (inflightRefresh) return inflightRefresh
 
 	const run = (async (): Promise<LiveCatalog> => {
-		const timeout = AbortSignal.timeout(CATALOG_TIMEOUT_MS)
-		const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout
+		const timeout = AbortSignal.timeout(options.timeoutMs ?? CATALOG_TIMEOUT_MS)
 		try {
-			const models = await fetchLiveCatalog(options.fetchers, signal)
+			const models = await fetchLiveCatalog(options.fetchers, timeout)
 			activeCatalog = { models, source: 'live', fetchedAt: now() }
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error)
