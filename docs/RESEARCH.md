@@ -8,6 +8,20 @@
 
 ---
 
+## ⚠️ Đính chính sau khi triển khai (2026-10-15)
+
+Tài liệu này được viết **trước khi** đối chiếu với host thật. Ba nhận định dưới đây đã bị bác bỏ bằng cách đọc mã nguồn `@earendil-works/pi-ai@1.2.0` và probe trực tiếp Gateway. Phần nào còn nhắc `registerCustomApi` hoặc provider `opencode-zen-free` cần đọc với thái độ dè dặt.
+
+| Nhận định trong tài liệu | Thực tế |
+| :--- | :--- |
+| `registerCustomApi` là seam chuẩn của Pi | **Sai.** Không tồn tại trong `pi-ai@1.2.0`. Seam đúng là `registerApiProvider({api, stream, streamSimple}, sourceId)` từ `pi-ai/compat` (mục 3.1, 5.1 README). |
+| Pi gọi model qua `context.tools` | **Sai.** Host truyền `TranscriptContext` chỉ có `messages`; tool nằm ở system message (`toolsAdded`/`toolsRemoved`). Đọc `context.tools` luôn ra `undefined` → mất toàn bộ tool calling (mục 5.2 README). |
+| Chỉ cần `shell`/`read` nguyên văn là qua gate | **Không đủ.** Gateway còn trả 403 `FreeTierError` khi: `stream: false`, không kèm tool nào, có header `x-opencode-request` (bất kể giá trị), hoặc tool `bash`/`shell` mang description rút gọn (bảng probe ở mục 5.3 README). |
+
+Tên provider cũng đã đổi: extension này đăng ký **`zen-free`** (không phải `opencode-zen-free` — đó là provider của package khác `pi-opencode-direct`, nay đã gỡ).
+
+---
+
 ## 1. Phát hiện cốt lõi về bản chất hệ sinh thái Pi & OpenCode Zen Gateway
 
 Qua khảo sát trực tiếp mã nguồn, cả hai dự án đều giải quyết bài toán: **Làm sao để Pi (`omp` / `@oh-my-pi/pi-coding-agent`) gọi được các model miễn phí của OpenCode Zen mà không cần API key trả phí, không cần tài khoản, và không cần cài đặt CLI gốc của OpenCode.**

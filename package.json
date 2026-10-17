@@ -1,12 +1,12 @@
 {
-  "name": "pi-opencode-free",
+  "name": "pi-zen-free",
   "version": "1.0.0",
   "description": "Native Pi extension for OpenCode Zen anonymous free models (no API key required)",
   "keywords": [
     "pi",
     "pi-extension",
     "pi-package",
-    "omp",
+    "zen-free",
     "opencode",
     "opencode-zen",
     "free-models"
@@ -42,7 +42,8 @@
     }
   },
   "devDependencies": {
-    "@oh-my-pi/pi-coding-agent": "^18.6.1",
+    "@earendil-works/pi-coding-agent": "^1.2.0",
+    "@earendil-works/pi-ai": "^1.2.0",
     "@types/node": "^24.0.0",
     "typescript": "^5.8.0"
   }

@@ -28,6 +28,15 @@ const ADVICE: Readonly<Record<UpstreamFailure, string>> = {
 	UNKNOWN: 'Lỗi không xác định từ upstream.',
 }
 
+/**
+ * pi-ai reports HTTP failures only as text (`401: {...}`, `Provider error (429): ...`),
+ * so the status has to be recovered from the message before classifying.
+ */
+export function statusFromMessage(message: string): number | undefined {
+	const match = /\b([45]\d\d)\b/.exec(message)
+	return match ? Number(match[1]) : undefined
+}
+
 export function classifyUpstreamFailure(status: number | undefined, message: string): Classification {
 	const text = message.toLowerCase()
 
@@ -56,5 +65,5 @@ export function classifyUpstreamFailure(status: number | undefined, message: str
 }
 
 export function formatFailure(modelId: string, classification: Classification): string {
-	return `[pi-opencode-free/${modelId}] ${classification.summary}`
+	return `[pi-zen-free/${modelId}] ${classification.summary}`
 }

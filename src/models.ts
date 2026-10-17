@@ -1,10 +1,20 @@
 /**
- * Static model seeds & known rejected denylist.
+ * Curated model seeds (offline fallback for the live catalog, see
+ * `catalog.ts`) & known rejected denylist.
  */
 
-import type { ProviderModelConfig } from '@oh-my-pi/pi-coding-agent'
+import type { ProviderModelConfig } from '@earendil-works/pi-coding-agent'
 
-export const SEED_MODELS: readonly ProviderModelConfig[] = [
+/**
+ * Chat-only view of the provider model config: the exported union also covers
+ * image/classifier entries, which have no contextWindow/maxTokens.
+ */
+export type ChatModelConfig = Extract<ProviderModelConfig, { reasoning: boolean }> & {
+	readonly contextWindow: number
+	readonly maxTokens: number
+}
+
+export const SEED_MODELS: readonly ChatModelConfig[] = [
 	{
 		id: 'big-pickle',
 		name: 'big-pickle (free)',
@@ -69,6 +79,14 @@ export const SEED_MODELS: readonly ProviderModelConfig[] = [
 		maxTokens: 131_072,
 	},
 ]
+
+/**
+ * Free-channel ids: OpenCode marks them with a `-free` suffix; `big-pickle`
+ * is the flagship free model that predates the convention.
+ */
+export function isFreeModelId(id: string): boolean {
+	return id === 'big-pickle' || id.endsWith('-free')
+}
 
 export const VERIFIED_FREE: Readonly<Record<string, true>> = {
 	'big-pickle': true,

@@ -2,8 +2,9 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import { CANONICAL_SESSION, DESCENDING_TIME_PART, canonicalSessionID, descendingTimePart, sessionForRequest } from '../src/session.ts'
+import { getCurrentTools } from '@earendil-works/pi-ai'
 import { withGateTools } from '../src/gate.ts'
-import { OPENCODE_TOOLS } from '../src/tools.ts'
+import { OPENCODE_TOOLS, gateTool } from '../src/tools.ts'
 import { classifyUpstreamFailure } from '../src/errors.ts'
 import { buildDoctorPayload } from '../src/doctor.ts'
 import { SEED_MODELS } from '../src/models.ts'
@@ -21,37 +22,57 @@ test('canonicalSessionID produces valid OpenCode EID with counter [1, 63]', () =
 	assert.notEqual(id1, id3, 'Different sessions must have distinct session IDs')
 })
 
-test('withGateTools injects genuine tools when context has none', () => {
-	const context = {
-		messages: [{ role: 'user' as const, content: 'Hello' }],
-	}
-	const options = {}
+const userMessage = { role: 'user' as const, content: 'Hello', timestamp: 0 }
 
-	const result = withGateTools(context as any, options as any)
-	assert.ok(result.context.tools, 'Tools array should be created')
-	assert.equal(result.context.tools.length, 2, 'Should inject shell and read')
-	assert.equal(result.options.toolChoice, 'none', 'Must set toolChoice to none when original had no tools')
+type TestTool = { name: string; description: string; parameters: Record<string, unknown> }
 
-	const shell = result.context.tools.find((t: any) => t.name === 'shell')
-	assert.ok(shell, 'shell tool must be present')
-	assert.equal(shell.description, OPENCODE_TOOLS.shell.description)
+function systemMessage(tools: TestTool[]) {
+	return { role: 'system' as const, content: '', toolsAdded: tools, timestamp: 0 }
+}
+
+test('withGateTools prepends a system message with genuine gate tools when the transcript has none', () => {
+	const result = withGateTools({ messages: [userMessage] }, {})
+
+	assert.equal(result.context.messages[0]?.role, 'system')
+	assert.equal(result.options.toolChoice, 'none', 'No tools means the model must not be asked to call any')
+
+	const tools = getCurrentTools(result.context.messages)
+	assert.equal(tools.length, 2, 'Should inject shell and read')
+	assert.equal(tools[0]?.description, gateTool('shell').description)
+	assert.equal(tools[1]?.description, gateTool('read').description)
 })
 
-test('withGateTools preserves existing tools and avoids toolChoice none when tools were provided', () => {
-	const customTool = {
-		name: 'custom_search',
-		description: 'Search things',
-		parameters: { type: 'object', properties: {} },
-	}
-	const context = {
-		tools: [customTool],
-		messages: [{ role: 'user' as const, content: 'Search' }],
-	}
-	const options = { toolChoice: 'auto' }
+test('withGateTools keeps existing tools and does not force toolChoice none', () => {
+	const custom = { name: 'custom_search', description: 'Search things', parameters: { type: 'object', properties: {} } }
+	const result = withGateTools({ messages: [systemMessage([custom]), userMessage] }, { toolChoice: 'auto' })
 
-	const result = withGateTools(context as any, options as any)
-	assert.equal(result.context.tools.length, 3, 'Should preserve custom tool and append missing gate tools')
-	assert.equal(result.options.toolChoice, 'auto', 'Should keep user-specified toolChoice')
+	assert.equal(result.options.toolChoice, 'auto', 'Real tools present: tool calling must stay enabled')
+
+	const tools = getCurrentTools(result.context.messages)
+	const names = tools.map((t) => t.name)
+	assert.ok(names.includes('custom_search'), 'custom tool must survive')
+	assert.ok(names.includes('shell') && names.includes('read'), 'gate tools must be appended')
+})
+
+test('withGateTools replaces a rewritten shell description with the genuine one', () => {
+	// The gate returns 403 FreeTierError for a shell tool that carries a
+	// shortened/rewritten description, so the seam must restore it.
+	const rewritten = { name: 'shell', description: 'Execute a shell command', parameters: { type: 'object', properties: {} } }
+	const result = withGateTools({ messages: [systemMessage([rewritten]), userMessage] }, {})
+
+	const shell = getCurrentTools(result.context.messages).find((t) => t.name === 'shell')
+	assert.equal(shell?.description, gateTool('shell').description)
+})
+
+test('withGateTools honours a later removal delta for tools it does not own', () => {
+	const custom = { name: 'custom_search', description: 'Search things', parameters: { type: 'object', properties: {} } }
+	const removal = { role: 'system' as const, content: '', toolsRemoved: [{ name: 'custom_search' }], timestamp: 1 }
+
+	const result = withGateTools({ messages: [systemMessage([custom]), removal, userMessage] }, {})
+
+	const names = getCurrentTools(result.context.messages).map((t) => t.name)
+	assert.equal(names.includes('custom_search'), false, 'the removal delta must still take effect')
+	assert.ok(names.includes('shell') && names.includes('read'))
 })
 
 test('classifyUpstreamFailure accurately distinguishes error kinds', () => {
@@ -70,13 +91,14 @@ test('classifyUpstreamFailure accurately distinguishes error kinds', () => {
 
 test('doctor payload contains required headers and agent tools', () => {
 	const { headers, body } = buildDoctorPayload('big-pickle')
-	assert.equal(headers['authorization'], 'Bearer public')
-	assert.equal(headers['x-opencode-client'], 'cli')
-	assert.match(headers['x-opencode-session'], CANONICAL_SESSION)
+	const doctorHeaders = headers as Record<string, string>
+	assert.equal(doctorHeaders['authorization'], 'Bearer public')
+	assert.equal(doctorHeaders['x-opencode-client'], 'cli')
+	assert.match(doctorHeaders['x-opencode-session'] as string, CANONICAL_SESSION)
 	assert.equal(body.stream, true)
 	assert.equal(body.tools.length, 2)
-	assert.equal(body.tools[0].function.name, 'shell')
-	assert.equal(body.tools[1].function.name, 'read')
+	assert.equal(body.tools[0]?.function.name, 'shell')
+	assert.equal(body.tools[1]?.function.name, 'read')
 })
 
 test('SEED_MODELS metadata is flat and contextWindow is valid', () => {

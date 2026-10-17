@@ -2,7 +2,7 @@
  * Lightweight Doctor self-test for OpenCode Zen Gate verification.
  */
 
-import { OPENCODE_TOOLS } from './tools.ts'
+import { gateTool } from './tools.ts'
 import { canonicalSessionID, clientProjectID, sessionHeaders } from './session.ts'
 
 export const ANONYMOUS_BASE = 'https://opencode.ai/inference/v1'
@@ -18,6 +18,8 @@ export interface DoctorResult {
 export function buildDoctorPayload(model = 'big-pickle') {
 	const sessionId = canonicalSessionID(`doctor:${Date.now()}`)
 	const projectId = clientProjectID('pi:doctor')
+	const shell = gateTool('shell')
+	const read = gateTool('read')
 
 	const headers = {
 		'authorization': `Bearer ${ANONYMOUS_KEY}`,
@@ -38,17 +40,17 @@ export function buildDoctorPayload(model = 'big-pickle') {
 			{
 				type: 'function',
 				function: {
-					name: 'shell',
-					description: OPENCODE_TOOLS.shell.description,
-					parameters: OPENCODE_TOOLS.shell.parameters,
+					name: shell.name,
+					description: shell.description,
+					parameters: shell.parameters,
 				},
 			},
 			{
 				type: 'function',
 				function: {
-					name: 'read',
-					description: OPENCODE_TOOLS.read.description,
-					parameters: OPENCODE_TOOLS.read.parameters,
+					name: read.name,
+					description: read.description,
+					parameters: read.parameters,
 				},
 			},
 		],
